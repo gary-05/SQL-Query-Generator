@@ -1,25 +1,31 @@
-import pool from '../db.js';
+import sharedPool from '../db.js';
+import userDbPool from '../db/userDb.js';
 
 // In-memory array to store query history entries (fallback for development)
 export const inMemoryHistory = [];
+
+const isDbMock = () => {
+  const dbUrl = process.env.DATABASE_URL;
+  return !dbUrl || dbUrl.includes('your_') || dbUrl.includes('placeholder');
+};
 
 /**
  * Executes a PostgreSQL query and returns the results.
  * Falls back to mock data if database connection details are not configured.
  * @param {string} sql 
  * @param {string} userPrompt
+ * @param {Pool} pool User's database connection pool
+ * @param {number} userId Authenticated user ID
  * @returns {Promise<object>}
  */
-export async function executeQuery(sql, userPrompt = '') {
+export async function executeQuery(sql, userPrompt = '', pool = sharedPool, userId = null) {
   const isPlaceholder = process.env.DB_USER === 'your_db_user' || !process.env.DB_HOST;
   let executionResult;
 
   try {
-    if (isPlaceholder) {
-      throw new Error('Database placeholders detected. Falling back to mock execution.');
-    }
-
-    const result = await pool.query(sql);
+    // If pool is not passed, fall back to sharedPool
+    const targetPool = pool || sharedPool;
+    const result = await targetPool.query(sql);
 
     // If result command is UPDATE/DELETE/INSERT
     const command = result.command || '';
@@ -37,14 +43,29 @@ export async function executeQuery(sql, userPrompt = '') {
       };
     }
 
-    // Insert into query_history on successful DB execution
-    try {
-      await pool.query(
-        'INSERT INTO query_history (user_prompt, generated_sql) VALUES ($1, $2)',
-        [userPrompt || 'Generated SQL Query', sql]
-      );
-    } catch (historyErr) {
-      console.error('Failed to log execution history to database:', historyErr.message);
+    // Insert into query_history on successful DB execution if user is authenticated
+    if (userId) {
+      try {
+        if (isDbMock()) {
+          inMemoryHistory.unshift({
+            id: inMemoryHistory.length + 1,
+            user_id: Number(userId),
+            user_prompt: userPrompt || 'Generated SQL Query',
+            generated_sql: sql,
+            executed_at: new Date()
+          });
+          if (inMemoryHistory.length > 200) {
+            inMemoryHistory.splice(200);
+          }
+        } else {
+          await userDbPool.query(
+            'INSERT INTO query_history (user_id, user_prompt, generated_sql) VALUES ($1, $2, $3)',
+            [Number(userId), userPrompt || 'Generated SQL Query', sql]
+          );
+        }
+      } catch (historyErr) {
+        console.error('Failed to log execution history to database:', historyErr.message);
+      }
     }
 
     return executionResult;
@@ -52,12 +73,14 @@ export async function executeQuery(sql, userPrompt = '') {
   } catch (err) {
     const isConnectionError = 
       err.message.includes('mock') || 
+      err.message.includes('placeholders') || 
+      err.message.includes('connection string') || 
       err.code === 'ECONNREFUSED' || 
       err.message.includes('connect') || 
       err.message.includes('authentication');
 
     if (isConnectionError) {
-      console.warn('Database connection failed or placeholder detected. Returning mock query execution results for:', sql);
+      console.warn('Database connection failed. Returning mock query execution results for:', sql);
       
       const sqlLower = sql.toLowerCase().trim();
       
@@ -93,16 +116,19 @@ export async function executeQuery(sql, userPrompt = '') {
       }
 
       // Log history to in-memory fallback
-      inMemoryHistory.unshift({
-        id: inMemoryHistory.length + 1,
-        user_prompt: userPrompt || 'Generated SQL Query',
-        generated_sql: sql,
-        executed_at: new Date()
-      });
+      if (userId) {
+        inMemoryHistory.unshift({
+          id: inMemoryHistory.length + 1,
+          user_id: Number(userId),
+          user_prompt: userPrompt || 'Generated SQL Query',
+          generated_sql: sql,
+          executed_at: new Date()
+        });
 
-      // Keep only last 20
-      if (inMemoryHistory.length > 20) {
-        inMemoryHistory.splice(20);
+        // Limit size of mock list
+        if (inMemoryHistory.length > 200) {
+          inMemoryHistory.splice(200);
+        }
       }
 
       return executionResult;
@@ -115,22 +141,24 @@ export async function executeQuery(sql, userPrompt = '') {
 
 /**
  * Fetches the last 20 query history entries from PostgreSQL or falls back to in-memory.
+ * @param {number|string} userId
  * @returns {Promise<Array>}
  */
-export async function getHistory() {
-  const isPlaceholder = process.env.DB_USER === 'your_db_user' || !process.env.DB_HOST;
+export async function getHistory(userId) {
+  const numUserId = Number(userId);
+
+  if (isDbMock()) {
+    return inMemoryHistory.filter(h => h.user_id === numUserId).slice(0, 20);
+  }
 
   try {
-    if (isPlaceholder) {
-      throw new Error('Database placeholders detected. Falling back to mock history.');
-    }
-
-    const { rows } = await pool.query(
-      'SELECT id, user_prompt, generated_sql, executed_at FROM query_history ORDER BY executed_at DESC LIMIT 20'
+    const { rows } = await userDbPool.query(
+      'SELECT id, user_prompt, generated_sql, executed_at FROM query_history WHERE user_id = $1 ORDER BY executed_at DESC LIMIT 20',
+      [numUserId]
     );
     return rows;
   } catch (err) {
     console.warn('Failed to query history from database. Returning in-memory history.');
-    return inMemoryHistory;
+    return inMemoryHistory.filter(h => h.user_id === numUserId).slice(0, 20);
   }
 }

@@ -5,6 +5,8 @@ import schemaRouter from './routes/schema.js';
 import queryRouter from './routes/query.js';
 import executeRouter from './routes/execute.js';
 import historyRouter from './routes/history.js';
+import authRouter from './routes/auth.js';
+import connectionRouter from './routes/connection.js';
 
 // Load environment variables
 dotenv.config();
@@ -21,6 +23,8 @@ app.use('/api', schemaRouter);
 app.use('/api', queryRouter);
 app.use('/api', executeRouter);
 app.use('/api', historyRouter);
+app.use('/api/auth', authRouter);
+app.use('/api', connectionRouter);
 
 // Basic test route
 app.get('/api/health', (req, res) => {

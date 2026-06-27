@@ -1,6 +1,6 @@
-import pool from '../db.js';
+import sharedPool from '../db.js';
 
-export async function getSchema() {
+export async function getSchema(pool = sharedPool) {
   const query = `
     SELECT table_name, column_name, data_type, is_nullable
     FROM information_schema.columns
