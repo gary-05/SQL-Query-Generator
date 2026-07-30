@@ -4,15 +4,6 @@ A high-fidelity, full-stack database helper application designed to translate na
 
 ---
 
-## 🎨 Design Theme & Aesthetics
-
-The application features a modern, premium **Pastel Color Theme** focused on readability and user experience. 
-- Custom typography utilizing Google Fonts' **Inter** typeface.
-- Clean glassmorphic layouts, soft borders, and clear tag pills.
-- Adaptive color indicators for query risk analysis and execution efficiency ratings.
-
----
-
 ## 🚀 Key Features
 
 - **Secure User Accounts & Sessions**:
